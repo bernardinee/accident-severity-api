@@ -1,0 +1,99 @@
+{
+  "model_name": "xgboost",
+  "model_file": "C:\\Users\\okrah\\OneDrive\\Desktop\\models\\xgboost_tuned.joblib",
+  "scaler_file": "C:\\Users\\okrah\\OneDrive\\Desktop\\models\\scaler.joblib",
+  "features_file": "C:\\Users\\okrah\\OneDrive\\Desktop\\models\\feature_names.json",
+  "n_features": 26,
+  "feature_names": [
+    "ax_mean",
+    "ax_std",
+    "ax_min",
+    "ax_max",
+    "ax_peak",
+    "ax_spectral_energy",
+    "ay_mean",
+    "ay_std",
+    "ay_min",
+    "ay_max",
+    "ay_rms",
+    "ay_kurt",
+    "ay_peak",
+    "ay_spectral_energy",
+    "az_mean",
+    "az_std",
+    "az_rms",
+    "az_spectral_energy",
+    "a_mag_std",
+    "a_mag_skew",
+    "a_mag_kurt",
+    "a_mag_spectral_energy",
+    "gx_mean",
+    "gx_kurt",
+    "mean_jerk",
+    "duration_above_2g"
+  ],
+  "classes": [
+    0,
+    1,
+    2
+  ],
+  "class_names": [
+    "Normal (0)",
+    "Moderate (1)",
+    "Severe (2)"
+  ],
+  "best_params": {
+    "n_estimators": 917,
+    "max_depth": 6,
+    "learning_rate": 0.08651816411982838,
+    "subsample": 0.6466198367501895,
+    "colsample_bytree": 0.8594035746986077,
+    "min_child_weight": 6,
+    "gamma": 0.15195694566836626,
+    "reg_alpha": 0.08985758732653205,
+    "reg_lambda": 0.04617981464315171,
+    "use_label_encoder": false,
+    "eval_metric": "mlogloss",
+    "random_state": 42,
+    "n_jobs": -1,
+    "verbosity": 0
+  },
+  "evaluation": {
+    "model": "xgboost",
+    "test_f1_macro": 0.987795,
+    "test_accuracy": 0.989266,
+    "test_roc_auc": 0.99968,
+    "per_class": {
+      "Normal (0)": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 3321
+      },
+      "Moderate (1)": {
+        "precision": 0.9948830409356725,
+        "recall": 0.9970695970695971,
+        "f1": 0.9959751189169411,
+        "support": 1365
+      },
+      "Severe (2)": {
+        "precision": 0.9968102073365231,
+        "recall": 0.994431185361973,
+        "f1": 0.9956192751891677,
+        "support": 1257
+      }
+    }
+  },
+  "baselines": {
+    "xgboost": {
+      "cv_f1_mean": 0.9993117027640522,
+      "cv_f1_std": 0.0003883530121576291,
+      "val_f1": 0.9966889130020778
+    },
+    "lightgbm": {
+      "cv_f1_mean": 0.9992471622707942,
+      "cv_f1_std": 0.0003662911046715673,
+      "val_f1": 0.9966889130020778
+    }
+  }
+}
