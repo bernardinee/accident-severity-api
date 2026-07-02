@@ -23,7 +23,9 @@ MODEL_DIR      = Path(__file__).parent / "models"
 TARGET_FS      = 100
 WINDOW_SAMPLES = 500
 CLASS_NAMES    = ["Normal", "Moderate", "Severe"]
-ACCIDENT_G_THRESHOLD = 2.0   # physics dual-validation threshold (g)
+ACCIDENT_G_THRESHOLD  = 2.0   # physics dual-validation threshold (g)
+SEVERE_G_THRESHOLD    = 7.0   # physics fallback boundary between Moderate/Severe (g)
+CONFIDENCE_THRESHOLD  = 0.70  # below this, prefer physics thresholds over the model's label
 
 logging.basicConfig(
     level=logging.INFO,
@@ -134,6 +136,19 @@ def run_inference(ax, ay, az, gx, gy, gz):
     proba    = _model.predict_proba(X_scaled)[0]
     confidence = float(np.max(proba))
 
+    # When the model is uncertain, its class boundaries are known to overlap
+    # (see ML_CLASSIFICATION_ANALYSIS_DETAILED.md issue #2) — fall back to the
+    # physics-based peak-magnitude thresholds instead of trusting a low-confidence label.
+    label_source = "model"
+    if confidence < CONFIDENCE_THRESHOLD:
+        label_source = "physics_fallback"
+        if peak_mag < ACCIDENT_G_THRESHOLD:
+            label = 0
+        elif peak_mag < SEVERE_G_THRESHOLD:
+            label = 1
+        else:
+            label = 2
+
     # Dual-validation: model must predict non-normal AND physics threshold confirms.
     # This prevents model noise from generating false accident alerts.
     accident_confirmed = bool(label >= 1 and peak_mag >= ACCIDENT_G_THRESHOLD)
@@ -142,6 +157,7 @@ def run_inference(ax, ay, az, gx, gy, gz):
         "severity_class":    label,
         "severity_name":     CLASS_NAMES[label],
         "confidence":        round(confidence, 4),
+        "label_source":      label_source,
         "probabilities": {
             "Normal":   round(float(proba[0]), 4),
             "Moderate": round(float(proba[1]), 4),
@@ -194,6 +210,8 @@ def health():
         "sample_rate_hz": TARGET_FS,
         "classes":    CLASS_NAMES,
         "accident_threshold_g": ACCIDENT_G_THRESHOLD,
+        "severe_threshold_g":   SEVERE_G_THRESHOLD,
+        "confidence_threshold": CONFIDENCE_THRESHOLD,
     }), 200
 
 
@@ -217,6 +235,7 @@ def predict():
             "severity_class":     0 | 1 | 2,
             "severity_name":      "Normal" | "Moderate" | "Severe",
             "confidence":         float,
+            "label_source":       "model" | "physics_fallback",
             "probabilities":      {"Normal": float, "Moderate": float, "Severe": float},
             "accident_confirmed": bool,     # model AND physics both agree
             "peak_magnitude_g":   float,
