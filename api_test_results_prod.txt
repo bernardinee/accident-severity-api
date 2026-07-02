@@ -1,0 +1,68 @@
+=================================================================
+Accident Severity API — Test Results
+Timestamp  : 2026-05-14 08:39:22
+Target URL : https://accident-severity-api-production.up.railway.app
+=================================================================
+
+[TEST 1/5]  GET /health
+  HTTP status      : 200
+  model            : xgboost_no_proxy
+  n_features       : 25
+  window_samples   : 500
+  classes          : ['Normal', 'Moderate', 'Severe']
+  [PASS] Health check returned 200 with status=healthy
+
+[TEST 2/5]  POST /predict — Class 0 — Normal driving
+  Synthetic peak a_mag : 1.060 g
+  HTTP status          : 200
+  severity_class       : 0 (Normal)
+  confidence           : 0.9903
+  accident_confirmed   : False
+  peak_magnitude_g     : 1.0598
+  probabilities        : {'Moderate': 0.0014, 'Normal': 0.9903, 'Severe': 0.0082}
+  inference_time_ms    : 309.9
+  [PASS] Predicted class 0 as expected
+
+[TEST 3/5]  POST /predict — Class 1 — Moderate (harsh event)
+  Synthetic peak a_mag : 3.701 g
+  HTTP status          : 200
+  severity_class       : 1 (Moderate)
+  confidence           : 0.9935
+  accident_confirmed   : True
+  peak_magnitude_g     : 3.7006
+  probabilities        : {'Moderate': 0.9935, 'Normal': 0.0008, 'Severe': 0.0057}
+  inference_time_ms    : 347.0
+  [PASS] Predicted class 1 as expected
+
+[TEST 4/5]  POST /predict — Class 2 — Severe (crash impact)
+  Synthetic peak a_mag : 9.028 g
+  HTTP status          : 200
+  severity_class       : 2 (Severe)
+  confidence           : 0.6372
+  accident_confirmed   : True
+  peak_magnitude_g     : 9.0275
+  probabilities        : {'Moderate': 0.3619, 'Normal': 0.001, 'Severe': 0.6372}
+  inference_time_ms    : 345.1
+  [PASS] Predicted class 2 as expected
+
+[TEST 5/5]  Error handling
+
+  5a. Missing field (no 'gz')
+     HTTP status : 400  error: Missing required field: 'gz'
+  [PASS] Missing field correctly rejected with 400
+
+  5b. Wrong array length (ax has 100 samples instead of 500)
+     HTTP status : 400  error: Field 'ax' must have exactly 500 samples, got 100
+  [PASS] Wrong length correctly rejected with 400
+
+  5c. Non-JSON Content-Type
+     HTTP status : 400  error: Content-Type must be application/json
+  [PASS] Non-JSON Content-Type correctly rejected with 400
+
+  5d. Array containing NaN
+     HTTP status : 400  error: Field 'ax' contains NaN or Inf values
+  [PASS] NaN values correctly rejected with 400
+
+=================================================================
+Results: 8/8 passed,  0/8 failed
+=================================================================

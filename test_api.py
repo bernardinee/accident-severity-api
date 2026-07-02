@@ -24,6 +24,7 @@ import numpy as np
 
 BASE_URL     = "http://localhost:5000"
 RESULTS_FILE = "api_test_results.txt"
+PROD_URL     = "https://accident-severity-api-production.up.railway.app"
 FS           = 100
 N            = 500   # samples per window (5 s @ 100 Hz)
 
@@ -281,6 +282,27 @@ def run_tests():
 
 
 if __name__ == "__main__":
+    import argparse
     import sys
+
+    parser = argparse.ArgumentParser(description="Accident Severity API test suite")
+    parser.add_argument(
+        "--url",
+        default=BASE_URL,
+        help=f"Base URL of the API (default: {BASE_URL})",
+    )
+    parser.add_argument(
+        "--prod", action="store_true",
+        help=f"Shorthand for --url {PROD_URL}",
+    )
+    args = parser.parse_args()
+
+    if args.prod:
+        BASE_URL = PROD_URL
+    elif args.url != BASE_URL:
+        BASE_URL = args.url
+
+    RESULTS_FILE = "api_test_results_prod.txt" if BASE_URL != "http://localhost:5000" else RESULTS_FILE
+
     ok = run_tests()
     sys.exit(0 if ok else 1)
