@@ -148,6 +148,19 @@ def run_inference(ax, ay, az, gx, gy, gz):
             label = 1
         else:
             label = 2
+    elif peak_mag >= SEVERE_G_THRESHOLD and label < 2:
+        # Physics escalation (safety-first): the model was trained on long,
+        # sustained vehicle-crash pulses, so it under-classifies brief high-g
+        # impacts (drops, sharp hits) as Moderate even at high confidence.
+        # A peak >= 7 g is physically a severe impact regardless of the
+        # temporal pattern - never let it go under-reported.
+        label = 2
+        label_source = "physics_escalation"
+    elif label == 2 and peak_mag < SEVERE_G_THRESHOLD and confidence < 0.85:
+        # Unsupported Severe: model says severe without the physics to back
+        # it (< 7 g) and without high confidence - downgrade to Moderate.
+        label = 1
+        label_source = "physics_downgrade"
 
     # Dual-validation: model must predict non-normal AND physics threshold confirms.
     # This prevents model noise from generating false accident alerts.
