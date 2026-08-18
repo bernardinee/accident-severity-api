@@ -1,292 +1,191 @@
 """
-Accident Severity Classification API
-Flask REST API wrapping the xgboost_no_proxy model (25 IMU features).
+Accident Severity Classification API — Phase 2 (STAGED, not deployed).
 
-Input:  POST /predict  — JSON with ax, ay, az, gx, gy, gz arrays (500 samples @ 100 Hz)
-Output: severity_class (0/1/2), confidence, accident_confirmed (dual-validation)
+Changes vs the Phase 1 production app:
+  1. New taxonomy: severity is a CRASH SIGNATURE (2-7 g resultant, ~40-250 ms
+     transient) graded by impulse (delta-v proxy) — NOT peak height.
+  2. REMOVED the peak >= 7 g -> force-Severe escalation.  Phase 2 (VZCrash)
+     proved >7 g events are maneuvers/artifacts, not crashes, and that real
+     crashes are 2-7 g; the old rule escalated artifacts and missed real crashes.
+  3. Model retrained on UNIT-NORMALIZED (g) data + VZCrash real crashes, and
+     probability-CALIBRATED; confidence thresholds re-derived from the crash
+     precision/recall trade-off (Task 6).
+  4. Defensive per-request unit normalization to g (median magnitude > 5 -> m/s²)
+     so a mis-configured client cannot re-introduce the unit-contamination bug.
+
+Request contract UNCHANGED: POST /predict with ax,ay,az,gx,gy,gz arrays of 500
+samples.  Response adds `p_crash` and `label_source`; `severity_class` semantics
+now mean Normal(no crash) / Moderate(minor crash) / Severe(serious crash).
 """
-
-import json
-import logging
-import os
-import time
+import json, logging, os, time
 from pathlib import Path
-
-import joblib
-import numpy as np
+import joblib, numpy as np
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from scipy import stats
+import os
+from scipy import stats, signal
 
-# ── Config ─────────────────────────────────────────────────────────────────────
-MODEL_DIR      = Path(__file__).parent / "models"
-TARGET_FS      = 100
-WINDOW_SAMPLES = 500
-CLASS_NAMES    = ["Normal", "Moderate", "Severe"]
-ACCIDENT_G_THRESHOLD  = 2.0   # physics dual-validation threshold (g)
-SEVERE_G_THRESHOLD    = 7.0   # physics fallback boundary between Moderate/Severe (g)
-CONFIDENCE_THRESHOLD  = 0.70  # below this, prefer physics thresholds over the model's label
+ART = Path(__file__).parent / "artifacts"
+TARGET_FS, WINDOW_SAMPLES = 100, 500
+CLASS_NAMES = ["Normal", "Moderate", "Severe"]
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+# ── crash-signature physics thresholds (from Phase 2 / VZCrash) ──────────────
+PEAK_MIN_G, PEAK_MAX_G = 2.0, 7.0
+# Phase 3 (Task 2) showed the 40 ms floor caps system recall at ~81%; lowering it
+# to 20 ms raises recall to ~95% at a small false-positive cost. Left at 40 ms by
+# default (conservative); set SIG_TRANSIENT_MIN_MS=20 to adopt the wider bound.
+TRANSIENT_MIN_MS = float(os.environ.get("SIG_TRANSIENT_MIN_MS", "40"))
+TRANSIENT_MAX_MS = 250.0
+G = 9.80665
+# Butterworth 20 Hz low-pass to match the harmonised training pipeline (Phase 3
+# Task 1b). The ESP32 sends unfiltered g; filtering here aligns train/serve.
+BUTTER_CUTOFF_HZ = 20.0
+_SOS = signal.butter(4, BUTTER_CUTOFF_HZ / (TARGET_FS / 2.0), btype="low", output="sos")
+
+
+def _lp(x):
+    """Zero-phase 20 Hz low-pass; no-op if too short."""
+    return signal.sosfiltfilt(_SOS, x) if len(x) > 15 else x
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-# ── Model loading (done once at startup) ──────────────────────────────────────
-log.info("Loading model from %s ...", MODEL_DIR)
-_model  = joblib.load(MODEL_DIR / "xgboost_no_proxy.joblib")
-_scaler = joblib.load(MODEL_DIR / "scaler_no_proxy.joblib")
-with open(MODEL_DIR / "feature_names_no_proxy.json") as f:
-    FEATURE_NAMES = json.load(f)   # ordered list of 25 feature names
-log.info("Model loaded — %d features, classes: %s", len(FEATURE_NAMES), CLASS_NAMES)
+_model = joblib.load(ART / "phase2_xgboost_calibrated.joblib")
+FEATURES = json.load(open(ART / "phase2_feature_names.json"))
+# re-derived thresholds from Task 6 (fallback to F1-optimal default if absent)
+try:
+    _cal = json.load(open(ART / "task6_calibration.json"))
+    CRASH_ALERT_THRESHOLD = float(_cal["recommended_thresholds"]["crash_alert_high_precision_0p90"])
+except Exception:
+    CRASH_ALERT_THRESHOLD = 0.5
+log.info("Model loaded (%d features); crash-alert P(crash) threshold=%.3f",
+         len(FEATURES), CRASH_ALERT_THRESHOLD)
 
-# ── Flask app ──────────────────────────────────────────────────────────────────
 app = Flask(__name__)
-CORS(app)   # allow cross-origin requests (ESP32, browser clients, etc.)
+CORS(app)
 
 
-# ── Feature extraction ─────────────────────────────────────────────────────────
-def _safe_stat(func, arr, default=0.0):
-    """Compute a scalar stat; return default on error or non-finite result."""
+def _safe(f, a, d=0.0):
     try:
-        v = float(func(arr))
-        return v if np.isfinite(v) else default
+        v = float(f(a)); return v if np.isfinite(v) else d
     except Exception:
-        return default
+        return d
 
 
-def _spectral_energy(arr):
-    """Sum of squared FFT magnitudes with DC component zeroed."""
-    fft_vals    = np.abs(np.fft.rfft(arr))
-    fft_vals[0] = 0.0   # remove DC
-    return float(np.sum(fft_vals ** 2))
+def _spec(a):
+    v = np.abs(np.fft.rfft(a)); v[0] = 0.0
+    return float(np.sum(v ** 2))
 
 
-def extract_features(ax, ay, az, gx):
-    """
-    Compute the 25 features used by xgboost_no_proxy from raw IMU arrays.
+def normalize_to_g(ax, ay, az):
+    """Defensive: convert accel to g if the window looks like m/s² (gravity ~9.8)."""
+    mag = np.sqrt(ax ** 2 + ay ** 2 + az ** 2)
+    scale = G if np.median(mag) > 5.0 else 1.0
+    return ax / scale, ay / scale, az / scale, scale
 
-    Feature definitions replicate preprocess.py stage8_extract_features() exactly:
-      - {col}_peak         = max(abs(col))
-      - {col}_rms          = sqrt(mean(col^2))
-      - {col}_kurt         = scipy excess kurtosis
-      - {col}_spectral_energy = sum(|rfft(col)|^2)  [DC zeroed]
-      - a_mag_*            = computed on sqrt(ax^2+ay^2+az^2)
-      - mean_jerk          = mean(abs(diff(ax)))   [first available axis]
 
-    Returns:
-        feat      (dict)  : feature_name -> float
-        peak_mag  (float) : peak resultant acceleration in g (for dual-validation)
-    """
-    ax = np.asarray(ax, dtype=float)
-    ay = np.asarray(ay, dtype=float)
-    az = np.asarray(az, dtype=float)
-    gx = np.asarray(gx, dtype=float)
-
+def features_25(ax, ay, az, gx):
     a_mag = np.sqrt(ax ** 2 + ay ** 2 + az ** 2)
-
-    feat = {
-        # ── ax ──────────────────────────────────────────────────────────────
-        "ax_mean":              float(np.mean(ax)),
-        "ax_std":               float(np.std(ax)),
-        "ax_min":               float(np.min(ax)),
-        "ax_max":               float(np.max(ax)),
-        "ax_peak":              float(np.max(np.abs(ax))),
-        "ax_spectral_energy":   _spectral_energy(ax),
-        # ── ay ──────────────────────────────────────────────────────────────
-        "ay_mean":              float(np.mean(ay)),
-        "ay_std":               float(np.std(ay)),
-        "ay_min":               float(np.min(ay)),
-        "ay_max":               float(np.max(ay)),
-        "ay_rms":               float(np.sqrt(np.mean(ay ** 2))),
-        "ay_kurt":              _safe_stat(stats.kurtosis, ay),
-        "ay_peak":              float(np.max(np.abs(ay))),
-        "ay_spectral_energy":   _spectral_energy(ay),
-        # ── az ──────────────────────────────────────────────────────────────
-        "az_mean":              float(np.mean(az)),
-        "az_std":               float(np.std(az)),
-        "az_rms":               float(np.sqrt(np.mean(az ** 2))),
-        "az_spectral_energy":   _spectral_energy(az),
-        # ── resultant magnitude ──────────────────────────────────────────────
-        "a_mag_std":            float(np.std(a_mag)),
-        "a_mag_skew":           _safe_stat(stats.skew, a_mag),
-        "a_mag_kurt":           _safe_stat(stats.kurtosis, a_mag),
-        "a_mag_spectral_energy": _spectral_energy(a_mag),
-        # ── gyroscope ────────────────────────────────────────────────────────
-        "gx_mean":              float(np.mean(gx)),
-        "gx_kurt":              _safe_stat(stats.kurtosis, gx),
-        # ── jerk (mean abs first difference of ax) ───────────────────────────
-        "mean_jerk":            float(np.mean(np.abs(np.diff(ax)))),
+    return {
+        "ax_mean": ax.mean(), "ax_std": ax.std(), "ax_min": ax.min(), "ax_max": ax.max(),
+        "ax_peak": np.abs(ax).max(), "ax_spectral_energy": _spec(ax),
+        "ay_mean": ay.mean(), "ay_std": ay.std(), "ay_min": ay.min(), "ay_max": ay.max(),
+        "ay_rms": np.sqrt((ay ** 2).mean()), "ay_kurt": _safe(stats.kurtosis, ay),
+        "ay_peak": np.abs(ay).max(), "ay_spectral_energy": _spec(ay),
+        "az_mean": az.mean(), "az_std": az.std(), "az_rms": np.sqrt((az ** 2).mean()),
+        "az_spectral_energy": _spec(az),
+        "a_mag_std": a_mag.std(), "a_mag_skew": _safe(stats.skew, a_mag),
+        "a_mag_kurt": _safe(stats.kurtosis, a_mag), "a_mag_spectral_energy": _spec(a_mag),
+        "gx_mean": gx.mean(), "gx_kurt": _safe(stats.kurtosis, gx),
+        "mean_jerk": np.abs(np.diff(ax)).mean(),
     }
 
-    return feat, float(np.max(a_mag))
+
+def crash_signature(ax, ay, az):
+    """Physics cross-check: peak_g, longest excursion >2g (ms), impulse (g·s)."""
+    mag = np.sqrt(ax ** 2 + ay ** 2 + az ** 2)
+    peak = float(mag.max())
+    above = mag >= PEAK_MIN_G
+    longest = run = 0
+    for a in above:
+        run = run + 1 if a else 0
+        longest = max(longest, run)
+    longest_ms = longest * 1000.0 / TARGET_FS
+    impulse = float(np.sum(mag[above] - 1.0) / TARGET_FS) if above.any() else 0.0
+    is_sig = (PEAK_MIN_G <= peak < PEAK_MAX_G and TRANSIENT_MIN_MS <= longest_ms <= TRANSIENT_MAX_MS)
+    return peak, longest_ms, impulse, bool(is_sig)
 
 
 def run_inference(ax, ay, az, gx, gy, gz):
-    """Full inference pipeline: feature extraction -> scale -> predict."""
-    feat, peak_mag = extract_features(ax, ay, az, gx)
+    ax, ay, az, scale = normalize_to_g(np.asarray(ax, float), np.asarray(ay, float), np.asarray(az, float))
+    ax, ay, az = _lp(ax), _lp(ay), _lp(az)          # 20 Hz LP to match training
+    gx = np.asarray(gx, float)
+    feat = features_25(ax, ay, az, gx)
+    X = np.nan_to_num(np.array([[feat[n] for n in FEATURES]], float))
+    proba = _model.predict_proba(X)[0]
+    model_label = int(np.argmax(proba))
+    p_crash = float(proba[1] + proba[2])
+    peak, longest_ms, impulse, is_sig = crash_signature(ax, ay, az)
 
-    # Build feature vector in the exact order the model was trained on
-    X = np.array([[feat[name] for name in FEATURE_NAMES]], dtype=float)
-    X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
-
-    X_scaled = _scaler.transform(X)
-    label    = int(_model.predict(X_scaled)[0])
-    proba    = _model.predict_proba(X_scaled)[0]
-    confidence = float(np.max(proba))
-
-    # When the model is uncertain, its class boundaries are known to overlap
-    # (see ML_CLASSIFICATION_ANALYSIS_DETAILED.md issue #2) — fall back to the
-    # physics-based peak-magnitude thresholds instead of trusting a low-confidence label.
-    label_source = "model"
-    if confidence < CONFIDENCE_THRESHOLD:
-        label_source = "physics_fallback"
-        if peak_mag < ACCIDENT_G_THRESHOLD:
-            label = 0
-        elif peak_mag < SEVERE_G_THRESHOLD:
-            label = 1
-        else:
-            label = 2
-    elif peak_mag >= SEVERE_G_THRESHOLD and label < 2:
-        # Physics escalation (safety-first): the model was trained on long,
-        # sustained vehicle-crash pulses, so it under-classifies brief high-g
-        # impacts (drops, sharp hits) as Moderate even at high confidence.
-        # A peak >= 7 g is physically a severe impact regardless of the
-        # temporal pattern - never let it go under-reported.
-        label = 2
-        label_source = "physics_escalation"
-    elif label == 2 and peak_mag < SEVERE_G_THRESHOLD and confidence < 0.85:
-        # Unsupported Severe: model says severe without the physics to back
-        # it (< 7 g) and without high confidence - downgrade to Moderate.
-        label = 1
-        label_source = "physics_downgrade"
-
-    # Dual-validation: model must predict non-normal AND physics threshold confirms.
-    # This prevents model noise from generating false accident alerts.
-    accident_confirmed = bool(label >= 1 and peak_mag >= ACCIDENT_G_THRESHOLD)
-
+    # ── decision: model P(crash) AND physics signature must agree ────────────
+    # The model alone can call a brief >=7 g spike "Moderate"; the signature gate
+    # (crash = 2-7 g, 40-250 ms transient) overrides such non-crash inputs to
+    # Normal.  This is the corrected replacement for the old peak>=7g escalation
+    # and is what fixes the brief-spike failure end-to-end.
+    model_says_crash = p_crash >= CRASH_ALERT_THRESHOLD
+    if model_says_crash and is_sig:
+        label = model_label if model_label >= 1 else 1
+        label_source = "model+signature"
+    else:
+        label = 0                                   # physics override -> Normal
+        label_source = ("signature_override" if model_says_crash
+                        else "model")
+    accident_confirmed = bool(label >= 1)
     return {
-        "severity_class":    label,
-        "severity_name":     CLASS_NAMES[label],
-        "confidence":        round(confidence, 4),
-        "label_source":      label_source,
-        "probabilities": {
-            "Normal":   round(float(proba[0]), 4),
-            "Moderate": round(float(proba[1]), 4),
-            "Severe":   round(float(proba[2]), 4),
-        },
+        "severity_class": label, "severity_name": CLASS_NAMES[label],
+        "confidence": round(float(proba[label]), 4),
+        "p_crash": round(p_crash, 4),
+        "model_severity": CLASS_NAMES[model_label],
         "accident_confirmed": accident_confirmed,
-        "peak_magnitude_g":  round(peak_mag, 4),
-        "features":          {k: round(v, 6) for k, v in feat.items()},
+        "probabilities": {CLASS_NAMES[i]: round(float(proba[i]), 4) for i in range(3)},
+        "crash_signature": {"peak_g": round(peak, 3), "excursion_ms": round(longest_ms, 1),
+                             "impulse_gs": round(impulse, 3), "signature_match": is_sig},
+        "unit_scale_applied": scale, "label_source": label_source,
     }
 
 
-# ── Validation helpers ─────────────────────────────────────────────────────────
-def _parse_imu_field(data, field):
-    """
-    Extract a numeric 1-D array from a JSON field.
-    Returns (array, error_string_or_None).
-    """
-    if field not in data:
-        return None, f"Missing required field: '{field}'"
-
-    try:
-        arr = np.array(data[field], dtype=float)
-    except (TypeError, ValueError) as exc:
-        return None, f"Field '{field}' must be a numeric array: {exc}"
-
-    if arr.ndim != 1:
-        return None, f"Field '{field}' must be a 1-D array, got shape {arr.shape}"
-
-    if len(arr) != WINDOW_SAMPLES:
-        return None, (
-            f"Field '{field}' must have exactly {WINDOW_SAMPLES} samples, "
-            f"got {len(arr)}"
-        )
-
-    if not np.all(np.isfinite(arr)):
-        return None, f"Field '{field}' contains NaN or Inf values"
-
-    return arr, None
-
-
-# ── Endpoints ──────────────────────────────────────────────────────────────────
 @app.route("/health", methods=["GET"])
 def health():
-    """Liveness / readiness probe."""
-    return jsonify({
-        "status":     "healthy",
-        "model":      "xgboost_no_proxy",
-        "n_features": len(FEATURE_NAMES),
-        "window_samples": WINDOW_SAMPLES,
-        "sample_rate_hz": TARGET_FS,
-        "classes":    CLASS_NAMES,
-        "accident_threshold_g": ACCIDENT_G_THRESHOLD,
-        "severe_threshold_g":   SEVERE_G_THRESHOLD,
-        "confidence_threshold": CONFIDENCE_THRESHOLD,
-    }), 200
+    return jsonify({"status": "healthy", "model": "phase2_xgboost_calibrated",
+                    "n_features": len(FEATURES), "taxonomy": "signature+impulse (v2)",
+                    "crash_alert_threshold": CRASH_ALERT_THRESHOLD,
+                    "classes": CLASS_NAMES}), 200
 
 
 @app.route("/predict", methods=["POST"])
 def predict():
-    """
-    Classify a 5-second IMU window as Normal / Moderate / Severe.
-
-    Request JSON:
-        {
-            "ax": [float, ...],   # 500 samples, g-units
-            "ay": [...],
-            "az": [...],
-            "gx": [...],          # deg/s or rad/s (not used in features directly
-            "gy": [...],          #   but required for completeness / future models)
-            "gz": [...]
-        }
-
-    Response JSON:
-        {
-            "severity_class":     0 | 1 | 2,
-            "severity_name":      "Normal" | "Moderate" | "Severe",
-            "confidence":         float,
-            "label_source":       "model" | "physics_fallback",
-            "probabilities":      {"Normal": float, "Moderate": float, "Severe": float},
-            "accident_confirmed": bool,     # model AND physics both agree
-            "peak_magnitude_g":   float,
-            "features":           {name: float, ...},
-            "inference_time_ms":  float
-        }
-    """
     t0 = time.perf_counter()
-
     if not request.is_json:
         return jsonify({"error": "Content-Type must be application/json"}), 400
-
     data = request.get_json(silent=True)
     if data is None:
-        return jsonify({"error": "Invalid or empty JSON body"}), 400
-
-    # Parse and validate all six channels
+        return jsonify({"error": "Invalid JSON"}), 400
     arrays = {}
-    for field in ("ax", "ay", "az", "gx", "gy", "gz"):
-        arr, err = _parse_imu_field(data, field)
-        if err:
-            return jsonify({"error": err}), 400
-        arrays[field] = arr
-
+    for f in ("ax", "ay", "az", "gx", "gy", "gz"):
+        if f not in data:
+            return jsonify({"error": f"Missing field: {f}"}), 400
+        arr = np.array(data[f], float)
+        if arr.shape != (WINDOW_SAMPLES,):
+            return jsonify({"error": f"{f} must be {WINDOW_SAMPLES} samples"}), 400
+        arrays[f] = arr
     try:
-        result = run_inference(
-            arrays["ax"], arrays["ay"], arrays["az"],
-            arrays["gx"], arrays["gy"], arrays["gz"],
-        )
+        res = run_inference(**arrays)
     except Exception as exc:
-        log.exception("Inference error")
+        log.exception("inference error")
         return jsonify({"error": f"Inference failed: {exc}"}), 500
+    res["inference_time_ms"] = round((time.perf_counter() - t0) * 1000, 2)
+    return jsonify(res), 200
 
-    result["inference_time_ms"] = round((time.perf_counter() - t0) * 1000, 2)
-    return jsonify(result), 200
 
-
-# ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
