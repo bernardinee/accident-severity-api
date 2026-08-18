@@ -1,0 +1,26 @@
+{
+  "train_windows": 198722,
+  "test_windows": 48989,
+  "test_real_crash_windows": 16602,
+  "calibration": {
+    "uncalibrated": {
+      "ece": 0.0015353725449711508,
+      "brier": 0.013954301675160726
+    },
+    "isotonic": {
+      "ece": 0.017296976455259537,
+      "brier": 0.01534016740014039
+    },
+    "platt": {
+      "ece": 0.019497348161900074,
+      "brier": 0.015720349173025124
+    }
+  },
+  "best_calibration": "isotonic",
+  "recommended_thresholds": {
+    "crash_alert_f1_optimal": 0.437,
+    "crash_alert_high_precision_0p90": 0.396,
+    "note": "P(crash)=P(Moderate)+P(Severe); firmware/API alert when P(crash) exceeds the chosen threshold. Full curve in task6_threshold_tradeoff.csv."
+  },
+  "test_macro_f1": 0.9467
+}
