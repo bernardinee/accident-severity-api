@@ -177,6 +177,10 @@ def predict():
         arr = np.array(data[f], float)
         if arr.shape != (WINDOW_SAMPLES,):
             return jsonify({"error": f"{f} must be {WINDOW_SAMPLES} samples"}), 400
+        # NaN/Inf (e.g. a null from the device) would otherwise flow through
+        # nan_to_num into all-zero features and a silent "Normal".
+        if not np.all(np.isfinite(arr)):
+            return jsonify({"error": f"Field '{f}' contains NaN or Inf values"}), 400
         arrays[f] = arr
     try:
         res = run_inference(**arrays)
