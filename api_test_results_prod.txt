@@ -1,0 +1,207 @@
+==============================================================================
+Accident Severity API - test results
+Timestamp : 2026-09-15 22:22:05
+Target    : https://accident-severity-api-production.up.railway.app
+Fixtures  : {'model': 'p5_xgboost', 'crash_threshold': 0.42, 'severe_ratio_threshold': 0.66, 'git_head_at_generation': '0e6970a'}
+==============================================================================
+
+[HEALTH]
+  {"classes": ["Normal", "Moderate", "Severe"], "crash_alert_threshold": 0.42, "model": "p5_xgboost", "n_features": 25, "severe_ratio_threshold": 0.66, "status": "healthy", "taxonomy": "signature+impulse (v2)"}
+  [PASS] GET /health -> 200 healthy
+  [PASS] health.model == 'p5_xgboost' (got 'p5_xgboost')
+  [PASS] health.n_features == 25 (got 25)
+  [PASS] health.taxonomy == 'signature+impulse (v2)' (got 'signature+impulse (v2)')
+  [PASS] health.crash_alert_threshold == 0.42 (got 0.42)
+  [PASS] health.severe_ratio_threshold == 0.66 (got 0.66)
+
+[CLASSIFICATION]
+  Synthetic: normal driving
+    returned Normal   | true Normal   | p_crash 0.0000 | label_source model | sig {'excursion_ms': 0.0, 'impulse_gs': 0.0, 'peak_g': 1.095, 'signature_match': False} | 890 ms
+  [PASS] severity_name == Normal
+  [PASS] label_source == model
+  [PASS] signature_match == False
+  [PASS] p_crash 0.0 within 0.002 of 0.0
+  [PASS] accident_confirmed consistent with severity_class
+  Synthetic: dropped device, 12 g / 50 ms spike
+    returned Normal   | true Normal   | p_crash 0.2834 | label_source model | sig {'excursion_ms': 70.0, 'impulse_gs': 0.552, 'peak_g': 14.037, 'signature_match': False} | 1060 ms
+  [PASS] severity_name == Normal
+  [PASS] label_source == model
+  [PASS] signature_match == False
+  [PASS] p_crash 0.2834 within 0.002 of 0.2834
+  [PASS] accident_confirmed consistent with severity_class
+  Synthetic: sustained 9 g for 2.5 s
+    returned Normal   | true Normal   | p_crash 0.0185 | label_source model | sig {'excursion_ms': 2520.0, 'impulse_gs': 20.128, 'peak_g': 9.825, 'signature_match': False} | 902 ms
+  [PASS] severity_name == Normal
+  [PASS] label_source == model
+  [PASS] signature_match == False
+  [PASS] p_crash 0.0185 within 0.002 of 0.0185
+  [PASS] accident_confirmed consistent with severity_class
+  Synthetic: single impact ~4 g / 90 ms
+    returned Moderate | true Moderate | p_crash 0.9899 | label_source model+signature | sig {'excursion_ms': 90.0, 'impulse_gs': 0.21, 'peak_g': 3.97, 'signature_match': True} | 903 ms
+  [PASS] severity_name == Moderate
+  [PASS] label_source == model+signature
+  [PASS] signature_match == True
+  [PASS] p_crash 0.9899 within 0.002 of 0.9899
+  [PASS] accident_confirmed consistent with severity_class
+  Synthetic: two impacts 1.2 s apart, 5.5 g + 5 g, 150 ms each
+    returned Severe   | true Severe   | p_crash 0.8433 | label_source model+signature | sig {'excursion_ms': 200.0, 'impulse_gs': 1.304, 'peak_g': 6.189, 'signature_match': True} | 907 ms
+  [PASS] severity_name == Severe
+  [PASS] label_source == model+signature
+  [PASS] signature_match == True
+  [PASS] p_crash 0.8433 within 0.002 of 0.8433
+  [PASS] accident_confirmed consistent with severity_class
+  Synthetic: 3 g / 30 ms pulse (below 40 ms floor)
+    returned Normal   | true Normal   | p_crash 0.0298 | label_source model | sig {'excursion_ms': 30.0, 'impulse_gs': 0.041, 'peak_g': 2.624, 'signature_match': False} | 882 ms
+  [PASS] severity_name == Normal
+  [PASS] label_source == model
+  [PASS] signature_match == False
+  [PASS] p_crash 0.0298 within 0.002 of 0.0298
+  [PASS] accident_confirmed consistent with severity_class
+  Synthetic: single impact ~4 g / 90 ms sent in m/s² (unit guard)
+    returned Moderate | true Moderate | p_crash 0.9899 | label_source model+signature | sig {'excursion_ms': 90.0, 'impulse_gs': 0.21, 'peak_g': 3.97, 'signature_match': True} | 869 ms
+  [PASS] severity_name == Moderate
+  [PASS] label_source == model+signature
+  [PASS] signature_match == True
+  [PASS] p_crash 0.9899 within 0.002 of 0.9899
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ crash-recording window, true Normal (vzc_1650705 w0)
+    returned Normal   | true Normal   | p_crash 0.0000 | label_source model | sig {'excursion_ms': 0.0, 'impulse_gs': 0.0, 'peak_g': 1.136, 'signature_match': False} | 854 ms
+  [PASS] severity_name == Normal
+  [PASS] label_source == model
+  [PASS] signature_match == False
+  [PASS] p_crash 0.0 within 0.002 of 0.0
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ crash-recording window, true Normal (vzc_2075460 w0)
+    returned Normal   | true Normal   | p_crash 0.0145 | label_source model | sig {'excursion_ms': 20.0, 'impulse_gs': 0.041, 'peak_g': 3.757, 'signature_match': False} | 988 ms
+  [PASS] severity_name == Normal
+  [PASS] label_source == model
+  [PASS] signature_match == False
+  [PASS] p_crash 0.0145 within 0.002 of 0.0145
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ crash-recording window, true Normal (vzc_0096713 w2)
+    returned Normal   | true Normal   | p_crash 0.0000 | label_source model | sig {'excursion_ms': 0.0, 'impulse_gs': 0.0, 'peak_g': 1.371, 'signature_match': False} | 1273 ms
+  [PASS] severity_name == Normal
+  [PASS] label_source == model
+  [PASS] signature_match == False
+  [PASS] p_crash 0.0 within 0.002 of 0.0
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ normal/near-miss recording, true Normal (vzc_0517812 w0)
+    returned Normal   | true Normal   | p_crash 0.0000 | label_source model | sig {'excursion_ms': 0.0, 'impulse_gs': 0.0, 'peak_g': 1.05, 'signature_match': False} | 1141 ms
+  [PASS] severity_name == Normal
+  [PASS] label_source == model
+  [PASS] signature_match == False
+  [PASS] p_crash 0.0 within 0.002 of 0.0
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ normal/near-miss recording, true Normal (vzc_0453242 w0)
+    returned Normal   | true Normal   | p_crash 0.0000 | label_source model | sig {'excursion_ms': 0.0, 'impulse_gs': 0.0, 'peak_g': 1.128, 'signature_match': False} | 944 ms
+  [PASS] severity_name == Normal
+  [PASS] label_source == model
+  [PASS] signature_match == False
+  [PASS] p_crash 0.0 within 0.002 of 0.0
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ normal/near-miss recording, true Normal (vzc_0073699 w0)
+    returned Normal   | true Normal   | p_crash 0.0000 | label_source model | sig {'excursion_ms': 0.0, 'impulse_gs': 0.0, 'peak_g': 1.131, 'signature_match': False} | 945 ms
+  [PASS] severity_name == Normal
+  [PASS] label_source == model
+  [PASS] signature_match == False
+  [PASS] p_crash 0.0 within 0.002 of 0.0
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: Phase-1 corpus non-crash motion (MotionSense), true Normal (sub_14.csv w0)
+    returned Normal   | true Normal   | p_crash 0.0000 | label_source model | sig {'excursion_ms': 80.0, 'impulse_gs': 0.107, 'peak_g': 2.652, 'signature_match': True} | 915 ms
+  [PASS] severity_name == Normal
+  [PASS] label_source == model
+  [PASS] signature_match == True
+  [PASS] p_crash 0.0 within 0.002 of 0.0
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: Phase-1 corpus non-crash motion (MotionSense), true Normal (sub_20.csv w0)
+    returned Normal   | true Normal   | p_crash 0.0000 | label_source model | sig {'excursion_ms': 270.0, 'impulse_gs': 11.947, 'peak_g': 8.126, 'signature_match': False} | 1017 ms
+  [PASS] severity_name == Normal
+  [PASS] label_source == model
+  [PASS] signature_match == False
+  [PASS] p_crash 0.0 within 0.002 of 0.0
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ verified crash, true Moderate (vzc_0487781 w0)
+    returned Moderate | true Moderate | p_crash 0.9864 | label_source model+signature | sig {'excursion_ms': 130.0, 'impulse_gs': 0.341, 'peak_g': 3.584, 'signature_match': True} | 1882 ms
+  [PASS] severity_name == Moderate
+  [PASS] label_source == model+signature
+  [PASS] signature_match == True
+  [PASS] p_crash 0.9864 within 0.002 of 0.9864
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ verified crash, true Moderate (vzc_2657994 w2)
+    returned Moderate | true Moderate | p_crash 0.8216 | label_source model+signature | sig {'excursion_ms': 60.0, 'impulse_gs': 0.127, 'peak_g': 3.211, 'signature_match': True} | 2092 ms
+  [PASS] severity_name == Moderate
+  [PASS] label_source == model+signature
+  [PASS] signature_match == True
+  [PASS] p_crash 0.8216 within 0.002 of 0.8216
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ verified crash, true Moderate (vzc_2448009 w1)
+    returned Moderate | true Moderate | p_crash 0.9562 | label_source model+signature | sig {'excursion_ms': 50.0, 'impulse_gs': 0.151, 'peak_g': 3.958, 'signature_match': True} | 883 ms
+  [PASS] severity_name == Moderate
+  [PASS] label_source == model+signature
+  [PASS] signature_match == True
+  [PASS] p_crash 0.9562 within 0.002 of 0.9562
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ verified crash, true Moderate (vzc_2667050 w0)
+    returned Moderate | true Moderate | p_crash 0.4484 | label_source model+signature | sig {'excursion_ms': 50.0, 'impulse_gs': 0.08, 'peak_g': 2.936, 'signature_match': True} | 949 ms
+  [PASS] severity_name == Moderate
+  [PASS] label_source == model+signature
+  [PASS] signature_match == True
+  [PASS] p_crash 0.4484 within 0.002 of 0.4484
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ verified crash, true Moderate (vzc_1619150 w1)
+    returned Moderate | true Moderate | p_crash 0.9863 | label_source model+signature | sig {'excursion_ms': 60.0, 'impulse_gs': 0.141, 'peak_g': 3.757, 'signature_match': True} | 921 ms
+  [PASS] severity_name == Moderate
+  [PASS] label_source == model+signature
+  [PASS] signature_match == True
+  [PASS] p_crash 0.9863 within 0.002 of 0.9863
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ verified crash, true Severe (vzc_1801544 w1)
+    returned Severe   | true Severe   | p_crash 0.9899 | label_source model+signature | sig {'excursion_ms': 130.0, 'impulse_gs': 1.061, 'peak_g': 4.505, 'signature_match': True} | 803 ms
+  [PASS] severity_name == Severe
+  [PASS] label_source == model+signature
+  [PASS] signature_match == True
+  [PASS] p_crash 0.9899 within 0.002 of 0.9899
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ verified crash, true Severe (vzc_0738280 w1)
+    returned Severe   | true Severe   | p_crash 0.9899 | label_source model+signature | sig {'excursion_ms': 140.0, 'impulse_gs': 1.511, 'peak_g': 4.399, 'signature_match': True} | 918 ms
+  [PASS] severity_name == Severe
+  [PASS] label_source == model+signature
+  [PASS] signature_match == True
+  [PASS] p_crash 0.9899 within 0.002 of 0.9899
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ verified crash, true Severe (vzc_0716456 w1)
+    returned Severe   | true Severe   | p_crash 0.9455 | label_source model+signature | sig {'excursion_ms': 70.0, 'impulse_gs': 0.914, 'peak_g': 3.439, 'signature_match': True} | 1036 ms
+  [PASS] severity_name == Severe
+  [PASS] label_source == model+signature
+  [PASS] signature_match == True
+  [PASS] p_crash 0.9455 within 0.002 of 0.9455
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ verified crash, true Severe (vzc_2562034 w0)
+    returned Moderate | true Severe   | p_crash 0.9808 | label_source model+signature | sig {'excursion_ms': 90.0, 'impulse_gs': 0.954, 'peak_g': 5.75, 'signature_match': True} | 849 ms
+  [PASS] severity_name == Moderate
+  [PASS] label_source == model+signature
+  [PASS] signature_match == True
+  [PASS] p_crash 0.9808 within 0.002 of 0.9808
+  [PASS] accident_confirmed consistent with severity_class
+  Real hold-out: VZ verified crash, true Severe (vzc_1978761 w0)
+    returned Severe   | true Severe   | p_crash 0.9645 | label_source model+signature | sig {'excursion_ms': 220.0, 'impulse_gs': 0.98, 'peak_g': 6.089, 'signature_match': True} | 928 ms
+  [PASS] severity_name == Severe
+  [PASS] label_source == model+signature
+  [PASS] signature_match == True
+  [PASS] p_crash 0.9645 within 0.002 of 0.9645
+  [PASS] accident_confirmed consistent with severity_class
+  [PASS] all three classes (Normal, Moderate, Severe) are produced
+
+[CONTRACT]
+  [PASS] Contract: missing gz -> 400 (got 400 'Missing field: gz')
+  [PASS] Contract: 100 samples -> 400 (got 400 'ax must be 500 samples')
+  [PASS] Contract: null sample -> 400 (got 400 "Field 'ay' contains NaN or Inf values")
+  [PASS] Contract: NaN sample -> 400 (got 400 "Field 'ax' contains NaN or Inf values")
+  [PASS] Contract: Infinity sample -> 400 (got 400 "Field 'az' contains NaN or Inf values")
+  [PASS] Contract: text/plain body -> 400 (got 400 'Content-Type must be application/json')
+
+==============================================================================
+Checks: 138 passed, 0 failed
+True-label agreement - designed: 7/7, real hold-out: 17/18 (per class: Normal 12/12, Moderate 7/7, Severe 5/6)
+(real-window agreement is a small random sample; system accuracy is in phase5/PHASE5_REPORT.md)
+==============================================================================

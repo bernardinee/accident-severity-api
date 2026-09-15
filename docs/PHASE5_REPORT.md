@@ -131,7 +131,24 @@ Exact grade agreement on signature-crash events (327): old API 0.930, new API **
 - API vs offline pipeline parity on the 18 real windows: 18/18 (class, signature, p_crash within 1e-4);
 - clean virtualenv from `requirements.txt` reproduces the fixtures.
 
-**Production:** see `cloud_api/DIAGNOSIS.md` §6 (deployment log, live suite results).
+**Production** (`https://accident-severity-api-production.up.railway.app`)
+- **Deployment:** `main` fast-forwarded to `780412e` and pushed 22:20:15Z. Railway: pending 22:20:18Z → **success 22:21:34Z**.
+- **Live `/health`:** `{"model":"p5_xgboost","crash_alert_threshold":0.42,"severe_ratio_threshold":0.66,"n_features":25,"taxonomy":"signature+impulse (v2)","status":"healthy"}`
+- `smoke_test.py` against production: **7/7**. Normal ×4 (driving, 12 g drop spike, sustained 9 g, 30 ms pulse), Moderate ×2 (4 g/90 ms in g and in m/s²), **Severe ×1** (two-impact collision).
+- `test_api.py --prod`: **138 passed, 0 failed** (`cloud_api/api_test_results_prod.txt`). Real hold-out windows agree with their true label 17/18 (Normal 12/12, Moderate 7/7, Severe 5/6), identical to the local build.
+
+**Downstream consumers checked**
+- `ml-integration-service` (emergency-response platform) reads `severity_class`, `severity_name`, `confidence` and `accident_confirmed`, all unchanged, and falls back to its own peak for `peak_magnitude_g`. No change needed.
+- The production firmware reads `severity_class`, `severity_name`, `confidence`, `p_crash`, `crash_signature.peak_g`/`excursion_ms` and `label_source`, all present.
+
+**Other firmware on disk**
+- `esp32_firmware/accident_detection_firmware.ino` (May) is marked SUPERSEDED in its header: unrotated circular buffer, impact at window start, gyro in rad/s.
+- `phase3/deploy/accident_detection_firmware_v2.ino` is consistent: centred window, ±16 g, deg/s.
+- `crash_detection_complete.ino` is now only a commented-out GPS test.
+
+**Rollback**
+- **Revert:** `git revert 780412e` restores the Phase 3 `app.py`; its artifacts (`artifacts/phase2_*`) are still in the image.
+- **Operating point only** (e.g. the uncapped system C): edit `crash_threshold` in `artifacts/decision_config.json`.
 
 ---
 
