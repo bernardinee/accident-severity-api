@@ -7,8 +7,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy model artifacts and application code
-# artifacts/ holds the Phase 3 v2 model the app loads; models/ is the previous
-# v1 model, kept unused for one release so a rollback needs no image rebuild.
+# artifacts/decision_config.json names the model the app loads (Phase 5:
+# p5_xgboost.joblib + calibration + thresholds). artifacts/phase2_* is the
+# previous (Phase 3 v2) model and models/ the v1 model, both kept unused so a
+# rollback is a revert of app.py/decision_config.json with no artifact upload.
 COPY models/ models/
 COPY artifacts/ artifacts/
 COPY app.py .

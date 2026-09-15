@@ -1,5 +1,11 @@
 """
-Accident Severity Classification API — Phase 2 (STAGED, not deployed).
+Accident Severity Classification API — v2 taxonomy, Phase 5 operating point.
+
+Phase 5 (2026-09): model retrained on the features this service computes
+(removing train/serve skew), crash and Severe thresholds selected on group-aware
+out-of-fold predictions, Severe graded by P(Severe | crash) instead of argmax,
+unit guard made robust to long high-g windows, NaN/Inf rejected with 400.
+Evidence: phase5/PHASE5_REPORT.md.
 
 Changes vs the Phase 1 production app:
   1. New taxonomy: severity is a CRASH SIGNATURE (2-7 g resultant, ~40-250 ms
@@ -10,7 +16,7 @@ Changes vs the Phase 1 production app:
   3. Model retrained on UNIT-NORMALIZED (g) data + VZCrash real crashes, and
      probability-CALIBRATED; confidence thresholds re-derived from the crash
      precision/recall trade-off (Task 6).
-  4. Defensive per-request unit normalization to g (median magnitude > 5 -> m/s²)
+  4. Defensive per-request unit normalization to g (10th-pct magnitude > 5 -> m/s²)
      so a mis-configured client cannot re-introduce the unit-contamination bug.
 
 Request contract UNCHANGED: POST /predict with ax,ay,az,gx,gy,gz arrays of 500
@@ -50,16 +56,28 @@ def _lp(x):
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-_model = joblib.load(ART / "phase2_xgboost_calibrated.joblib")
-FEATURES = json.load(open(ART / "phase2_feature_names.json"))
-# re-derived thresholds from Task 6 (fallback to F1-optimal default if absent)
-try:
-    _cal = json.load(open(ART / "task6_calibration.json"))
-    CRASH_ALERT_THRESHOLD = float(_cal["recommended_thresholds"]["crash_alert_high_precision_0p90"])
-except Exception:
-    CRASH_ALERT_THRESHOLD = 0.5
-log.info("Model loaded (%d features); crash-alert P(crash) threshold=%.3f",
-         len(FEATURES), CRASH_ALERT_THRESHOLD)
+# Model + operating point come from ONE file, produced by phase5/p5_tune.py.
+# No silent fallback: a missing or partial config must stop the service, because
+# a default threshold quietly changes every classification.
+_cfg = json.load(open(ART / "decision_config.json"))
+MODEL_NAME = _cfg["model"]
+_model = joblib.load(ART / _cfg["model_file"])
+FEATURES = json.load(open(ART / _cfg["feature_names_file"]))
+CRASH_ALERT_THRESHOLD = float(_cfg["crash_threshold"])
+SEVERE_RATIO_THRESHOLD = float(_cfg["severe_ratio_threshold"])
+_CAL_X = np.asarray(_cfg["pcrash_calibration"]["x"], float)
+_CAL_Y = np.asarray(_cfg["pcrash_calibration"]["y"], float)
+
+
+def calibrate(proba):
+    """Isotonic P(crash) calibration; P(Moderate), P(Severe) rescaled so P(Severe | crash) is unchanged."""
+    pc = proba[1] + proba[2]
+    pcc = float(np.interp(pc, _CAL_X, _CAL_Y))
+    s = pcc / pc if pc > 0 else 0.0
+    return np.array([1.0 - pcc, proba[1] * s, proba[2] * s])
+log.info("Model %s loaded (%d features); crash threshold P(crash)>=%.3f; "
+         "Severe threshold P(Severe|crash)>=%.3f", MODEL_NAME, len(FEATURES),
+         CRASH_ALERT_THRESHOLD, SEVERE_RATIO_THRESHOLD)
 
 app = Flask(__name__)
 CORS(app)
@@ -78,9 +96,15 @@ def _spec(a):
 
 
 def normalize_to_g(ax, ay, az):
-    """Defensive: convert accel to g if the window looks like m/s² (gravity ~9.8)."""
+    """Defensive: convert accel to g if the window looks like m/s² (gravity ~9.8).
+
+    Uses the 10th percentile of |a|, not the median: an m/s² window sits near
+    9.8 almost throughout, whereas a g window only exceeds 5 during events. The
+    median misfired on g windows with >2.5 s above 5 g (e.g. a sustained 9 g
+    manoeuvre) and rescaled them by 1/9.81.
+    """
     mag = np.sqrt(ax ** 2 + ay ** 2 + az ** 2)
-    scale = G if np.median(mag) > 5.0 else 1.0
+    scale = G if np.percentile(mag, 10) > 5.0 else 1.0
     return ax / scale, ay / scale, az / scale, scale
 
 
@@ -122,7 +146,7 @@ def run_inference(ax, ay, az, gx, gy, gz):
     gx = np.asarray(gx, float)
     feat = features_25(ax, ay, az, gx)
     X = np.nan_to_num(np.array([[feat[n] for n in FEATURES]], float))
-    proba = _model.predict_proba(X)[0]
+    proba = calibrate(_model.predict_proba(X)[0])
     model_label = int(np.argmax(proba))
     p_crash = float(proba[1] + proba[2])
     peak, longest_ms, impulse, is_sig = crash_signature(ax, ay, az)
@@ -132,9 +156,14 @@ def run_inference(ax, ay, az, gx, gy, gz):
     # (crash = 2-7 g, 40-250 ms transient) overrides such non-crash inputs to
     # Normal.  This is the corrected replacement for the old peak>=7g escalation
     # and is what fixes the brief-spike failure end-to-end.
+    #
+    # Grade: Severe when P(Severe | crash) clears a tuned threshold. The previous
+    # argmax grade under-called Severe (the class is 7x rarer than Moderate):
+    # 110 of 1,216 held-out Severe windows came back Moderate.
     model_says_crash = p_crash >= CRASH_ALERT_THRESHOLD
     if model_says_crash and is_sig:
-        label = model_label if model_label >= 1 else 1
+        p_severe_given_crash = float(proba[2] / p_crash) if p_crash > 0 else 0.0
+        label = 2 if p_severe_given_crash >= SEVERE_RATIO_THRESHOLD else 1
         label_source = "model+signature"
     else:
         label = 0                                   # physics override -> Normal
@@ -156,9 +185,10 @@ def run_inference(ax, ay, az, gx, gy, gz):
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "healthy", "model": "phase2_xgboost_calibrated",
+    return jsonify({"status": "healthy", "model": MODEL_NAME,
                     "n_features": len(FEATURES), "taxonomy": "signature+impulse (v2)",
                     "crash_alert_threshold": CRASH_ALERT_THRESHOLD,
+                    "severe_ratio_threshold": SEVERE_RATIO_THRESHOLD,
                     "classes": CLASS_NAMES}), 200
 
 

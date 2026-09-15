@@ -191,3 +191,29 @@ Scenario-by-scenario tables: `postman_comparison.txt` (local vs live) and `postm
 - **The build log for that failure could not be retrieved.** The Railway CLI 4.58.0 on this machine returns `Unauthorized. Please login with 'railway login'`, and GitHub carries only the status text "Deployment failed". To pull it: `! railway login`, then `railway logs --build` for that deployment in project `7e4b7f88-37d7-4aee-beb2-29c76d52a6a5`. Since the identical tree built successfully on retry, the cause was not in the code.
 - **The API fix (§3b) is NOT live.** It is committed on `fix/all-normal-diagnosis`, not pushed. Railway deploys `main`, so it goes live only after push + merge.
 - **The firmware fix (§3a) is on disk only.** It must be flashed to the ESP32. That is the fix that resolves the reported symptom, and it needs no API deploy.
+
+---
+
+## 6. Phase 5 follow-up (2026-09-15): fixed, fine-tuned, redeployed
+
+The §5 status above is superseded. Full method and evidence: `docs/PHASE5_REPORT.md`.
+
+**Fixed**
+- **Severity grade biased against Severe:** argmax → calibrated P(Severe | crash) ≥ 0.66.
+- **Train/serve skew:** retrained on the features this service computes.
+- **Stale threshold:** re-selected on group-aware out-of-fold predictions.
+- **Calibration:** group-aware isotonic calibration; test ECE 0.037 → 0.0023.
+- **Unit guard:** uses the 10th percentile, so long high-g windows are no longer rescaled.
+- **NaN/Inf/null:** rejected with 400.
+- **Test suite:** designed Normal/Moderate/Severe cases, random real hold-out windows, contract cases; v1 assets moved to `legacy/`.
+- **Firmware** (outside this repo): impact-centred capture, ±16 g, ±500 dps, boot mount-orientation check.
+
+**Held-out system results** (48,989 windows, 10,806 recordings never used in training or tuning)
+
+| | Before | After |
+|---|---|---|
+| Macro-F1 | 0.9579 [0.9529, 0.9625] | **0.9641 [0.9594, 0.9684]** (Δ +0.0062 [+0.0024, +0.0098], p = 0.001) |
+| Recall N / M / S | 0.994 / 0.947 / 0.892 | 0.995 / 0.937 / **0.952** |
+| Normal false-alarm rate | 0.58 % | 0.54 % |
+
+Deployment and live verification results are recorded in `docs/PHASE5_REPORT.md` §7.
