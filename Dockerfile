@@ -13,7 +13,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # rollback is a revert of app.py/decision_config.json with no artifact upload.
 COPY models/ models/
 COPY artifacts/ artifacts/
-COPY app.py .
+COPY app.py profiles.py events.py .
+
+# Incident store defaults to sqlite:///data/events.db. The container filesystem is
+# wiped on redeploy: mount a Railway volume at /app/data (or set
+# EVENTS_DATABASE_URL) before collecting anything that must survive.
 
 EXPOSE $PORT
 

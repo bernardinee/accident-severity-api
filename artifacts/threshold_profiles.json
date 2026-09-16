@@ -1,0 +1,33 @@
+{
+  "_comment": "Single source of truth for the post-model crash-signature gate. Read by app.py (profiles.py) and compiled into the firmware by tools/gen_firmware_profiles.py. Do not edit 'production': it is the thesis taxonomy (phase2/label_v2.py) and tests/test_profiles.py pins it. 'demo_rc' is written only by analysis/rc_demo_profile.py --write-profile from measured RC-car data.",
+  "default": "production",
+  "profiles": {
+    "production": {
+      "status": "derived",
+      "description": "Operating taxonomy. Derived from 27,711 verified VZCrash full-size vehicle crashes (Phase 2).",
+      "peak_min_g": 2.0,
+      "peak_max_g": 7.0,
+      "dur_min_ms": 40.0,
+      "dur_max_ms": 250.0,
+      "severe_impulse_gs": 0.959,
+      "severity_grading": "model_ratio",
+      "provenance": {
+        "source": "phase2/label_v2.py, phase2/outputs/vzcrash_analysis.json",
+        "peak_band": "2.0-7.0 g contains 99.93% of 27,711 VZCrash crash-event peaks (0.00% below 2 g, 0.07% at or above 7 g)",
+        "duration_window": "40-250 ms: 17.2% of crash events fall below 40 ms, 1.8% above 250 ms (81.0% inside)",
+        "severe_impulse": "0.959 g.s = 85th percentile of event impulse over the 22,433 signature-matching VZCrash crashes; delta-v = 0.959 x 9.80665 = 9.40 m/s (33.9 km/h)"
+      }
+    },
+    "demo_rc": {
+      "status": "pending_measurement",
+      "description": "Scaled demonstration configuration for the radio-controlled demonstrator. NOT the operating taxonomy; no thesis performance figure derives from it. See DEMO_PROFILE.md.",
+      "peak_min_g": null,
+      "peak_max_g": null,
+      "dur_min_ms": null,
+      "dur_max_ms": null,
+      "severe_impulse_gs": null,
+      "severity_grading": "impulse",
+      "provenance": null
+    }
+  }
+}
