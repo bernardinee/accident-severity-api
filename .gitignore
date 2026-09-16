@@ -5,3 +5,8 @@ __pycache__/
 .env
 *.log
 api_test_results.txt
+
+# firmware credentials
+firmware/**/secrets.h
+# local incident store
+data/events.db

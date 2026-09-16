@@ -1,6 +1,7 @@
 flask>=3.0.0
 flask-cors>=4.0.0
 gunicorn>=21.2.0
+SQLAlchemy==2.0.25
 # Pinned: phase2_xgboost_calibrated.joblib is a pickle of a CalibratedClassifierCV.
 # Unpickling under a different scikit-learn minor version warns and can fail, so
 # these four match the versions the model was trained and pickled with.

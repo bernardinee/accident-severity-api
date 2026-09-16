@@ -31,17 +31,22 @@ from flask_cors import CORS
 import os
 from scipy import stats, signal
 
+import events
+import profiles
+
 ART = Path(__file__).parent / "artifacts"
 TARGET_FS, WINDOW_SAMPLES = 100, 500
 CLASS_NAMES = ["Normal", "Moderate", "Severe"]
 
-# ── crash-signature physics thresholds (from Phase 2 / VZCrash) ──────────────
-PEAK_MIN_G, PEAK_MAX_G = 2.0, 7.0
-# Phase 3 (Task 2) showed the 40 ms floor caps system recall at ~81%; lowering it
-# to 20 ms raises recall to ~95% at a small false-positive cost. Left at 40 ms by
-# default (conservative); set SIG_TRANSIENT_MIN_MS=20 to adopt the wider bound.
-TRANSIENT_MIN_MS = float(os.environ.get("SIG_TRANSIENT_MIN_MS", "40"))
-TRANSIENT_MAX_MS = 250.0
+# ── crash-signature physics thresholds: named profile, production by default ──
+# artifacts/threshold_profiles.json holds the thresholds; THRESHOLD_PROFILE selects
+# one. Unset, unrecognised or not-yet-derived values resolve to production. The
+# production floor keeps its SIG_TRANSIENT_MIN_MS override (Phase 3 Task 2: 40 ms
+# caps system recall at ~81%, 20 ms raises it to ~95%).
+ACTIVE_PROFILE = profiles.resolve()
+# module-level names kept for phase5/ and diagnosis scripts that import them
+PEAK_MIN_G, PEAK_MAX_G = ACTIVE_PROFILE.peak_min_g, ACTIVE_PROFILE.peak_max_g
+TRANSIENT_MIN_MS, TRANSIENT_MAX_MS = ACTIVE_PROFILE.dur_min_ms, ACTIVE_PROFILE.dur_max_ms
 G = 9.80665
 # Butterworth 20 Hz low-pass to match the harmonised training pipeline (Phase 3
 # Task 1b). The ESP32 sends unfiltered g; filtering here aligns train/serve.
@@ -78,6 +83,9 @@ def calibrate(proba):
 log.info("Model %s loaded (%d features); crash threshold P(crash)>=%.3f; "
          "Severe threshold P(Severe|crash)>=%.3f", MODEL_NAME, len(FEATURES),
          CRASH_ALERT_THRESHOLD, SEVERE_RATIO_THRESHOLD)
+(log.info if ACTIVE_PROFILE.name == profiles.PRODUCTION and not ACTIVE_PROFILE.note else log.warning)(
+    "Threshold profile %s %s (requested=%r%s)", ACTIVE_PROFILE.name, ACTIVE_PROFILE.thresholds(),
+    ACTIVE_PROFILE.requested, f"; {ACTIVE_PROFILE.note}" if ACTIVE_PROFILE.note else "")
 
 app = Flask(__name__)
 CORS(app)
@@ -125,22 +133,13 @@ def features_25(ax, ay, az, gx):
     }
 
 
-def crash_signature(ax, ay, az):
-    """Physics cross-check: peak_g, longest excursion >2g (ms), impulse (g·s)."""
-    mag = np.sqrt(ax ** 2 + ay ** 2 + az ** 2)
-    peak = float(mag.max())
-    above = mag >= PEAK_MIN_G
-    longest = run = 0
-    for a in above:
-        run = run + 1 if a else 0
-        longest = max(longest, run)
-    longest_ms = longest * 1000.0 / TARGET_FS
-    impulse = float(np.sum(mag[above] - 1.0) / TARGET_FS) if above.any() else 0.0
-    is_sig = (PEAK_MIN_G <= peak < PEAK_MAX_G and TRANSIENT_MIN_MS <= longest_ms <= TRANSIENT_MAX_MS)
-    return peak, longest_ms, impulse, bool(is_sig)
+def crash_signature(ax, ay, az, profile=None):
+    """Physics cross-check: peak_g, longest excursion above the profile floor (ms), impulse (g·s)."""
+    return profiles.crash_signature(ax, ay, az, profile or ACTIVE_PROFILE)
 
 
-def run_inference(ax, ay, az, gx, gy, gz):
+def run_inference(ax, ay, az, gx, gy, gz, profile=None):
+    profile = profile or ACTIVE_PROFILE
     ax, ay, az, scale = normalize_to_g(np.asarray(ax, float), np.asarray(ay, float), np.asarray(az, float))
     ax, ay, az = _lp(ax), _lp(ay), _lp(az)          # 20 Hz LP to match training
     gx = np.asarray(gx, float)
@@ -149,7 +148,7 @@ def run_inference(ax, ay, az, gx, gy, gz):
     proba = calibrate(_model.predict_proba(X)[0])
     model_label = int(np.argmax(proba))
     p_crash = float(proba[1] + proba[2])
-    peak, longest_ms, impulse, is_sig = crash_signature(ax, ay, az)
+    peak, longest_ms, impulse, is_sig = crash_signature(ax, ay, az, profile)
 
     # ── decision: model P(crash) AND physics signature must agree ────────────
     # The model alone can call a brief >=7 g spike "Moderate"; the signature gate
@@ -161,9 +160,14 @@ def run_inference(ax, ay, az, gx, gy, gz):
     # argmax grade under-called Severe (the class is 7x rarer than Moderate):
     # 110 of 1,216 held-out Severe windows came back Moderate.
     model_says_crash = p_crash >= CRASH_ALERT_THRESHOLD
+    # The demo_rc profile grades by measured impulse instead: the Severe head was
+    # trained on VZCrash-scale impulses an RC car cannot produce (DEMO_PROFILE.md).
     if model_says_crash and is_sig:
-        p_severe_given_crash = float(proba[2] / p_crash) if p_crash > 0 else 0.0
-        label = 2 if p_severe_given_crash >= SEVERE_RATIO_THRESHOLD else 1
+        if profile.severity_grading == "impulse":
+            label = profiles.grade_by_impulse(impulse, is_sig, profile)
+        else:
+            p_severe_given_crash = float(proba[2] / p_crash) if p_crash > 0 else 0.0
+            label = 2 if p_severe_given_crash >= SEVERE_RATIO_THRESHOLD else 1
         label_source = "model+signature"
     else:
         label = 0                                   # physics override -> Normal
@@ -180,6 +184,7 @@ def run_inference(ax, ay, az, gx, gy, gz):
         "crash_signature": {"peak_g": round(peak, 3), "excursion_ms": round(longest_ms, 1),
                              "impulse_gs": round(impulse, 3), "signature_match": is_sig},
         "unit_scale_applied": scale, "label_source": label_source,
+        **profile.response_fields(),
     }
 
 
@@ -189,7 +194,7 @@ def health():
                     "n_features": len(FEATURES), "taxonomy": "signature+impulse (v2)",
                     "crash_alert_threshold": CRASH_ALERT_THRESHOLD,
                     "severe_ratio_threshold": SEVERE_RATIO_THRESHOLD,
-                    "classes": CLASS_NAMES}), 200
+                    "classes": CLASS_NAMES, **ACTIVE_PROFILE.response_fields()}), 200
 
 
 @app.route("/predict", methods=["POST"])
@@ -219,6 +224,30 @@ def predict():
         return jsonify({"error": f"Inference failed: {exc}"}), 500
     res["inference_time_ms"] = round((time.perf_counter() - t0) * 1000, 2)
     return jsonify(res), 200
+
+
+def parse_window(data):
+    """Validate the six 500-sample channels exactly as /predict does. Returns (arrays, error)."""
+    arrays = {}
+    for f in ("ax", "ay", "az", "gx", "gy", "gz"):
+        if f not in data:
+            return None, f"Missing field: {f}"
+        try:
+            arr = np.array(data[f], float)
+        except (TypeError, ValueError):
+            return None, f"Field '{f}' must be an array of numbers"
+        if arr.shape != (WINDOW_SAMPLES,):
+            return None, f"{f} must be {WINDOW_SAMPLES} samples"
+        if not np.all(np.isfinite(arr)):
+            return None, f"Field '{f}' contains NaN or Inf values"
+        arrays[f] = arr
+    return arrays, None
+
+
+app.register_blueprint(events.create_blueprint(
+    classify=lambda arrays: run_inference(**arrays),
+    parse_window=parse_window,
+    active_profile=lambda: ACTIVE_PROFILE))
 
 
 if __name__ == "__main__":

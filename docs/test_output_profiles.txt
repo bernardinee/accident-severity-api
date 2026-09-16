@@ -1,0 +1,39 @@
+============================= test session starts =============================
+platform win32 -- Python 3.12.5, pytest-9.1.1, pluggy-1.6.0 -- C:\Users\okrah\AppData\Local\Programs\Python\Python312\python.exe
+rootdir: C:\Users\okrah\OneDrive\Desktop\cloud_api
+plugins: anyio-4.12.1, asyncio-1.4.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 30 items
+
+tests/test_profiles.py::test_production_thresholds_are_the_thesis_values PASSED [  3%]
+tests/test_profiles.py::test_unset_unknown_or_underived_profiles_resolve_to_production[None-None] PASSED [  6%]
+tests/test_profiles.py::test_unset_unknown_or_underived_profiles_resolve_to_production[-None] PASSED [ 10%]
+tests/test_profiles.py::test_unset_unknown_or_underived_profiles_resolve_to_production[production-None] PASSED [ 13%]
+tests/test_profiles.py::test_unset_unknown_or_underived_profiles_resolve_to_production[  PRODUCTION -None] PASSED [ 16%]
+tests/test_profiles.py::test_unset_unknown_or_underived_profiles_resolve_to_production[demo-unrecognised] PASSED [ 20%]
+tests/test_profiles.py::test_unset_unknown_or_underived_profiles_resolve_to_production[prod-unrecognised] PASSED [ 23%]
+tests/test_profiles.py::test_unset_unknown_or_underived_profiles_resolve_to_production[DEMO-RC-unrecognised] PASSED [ 26%]
+tests/test_profiles.py::test_unset_unknown_or_underived_profiles_resolve_to_production[demo_rc-not derived] PASSED [ 30%]
+tests/test_profiles.py::test_env_selects_profile_and_derived_demo_is_honoured PASSED [ 33%]
+tests/test_profiles.py::test_partially_derived_demo_falls_back_to_production PASSED [ 36%]
+tests/test_profiles.py::test_duration_override_applies_to_production_only PASSED [ 40%]
+tests/test_profiles.py::test_app_default_profile_is_production PASSED    [ 43%]
+tests/test_profiles.py::test_production_gate_identical_to_pre_profile_gate PASSED [ 46%]
+tests/test_profiles.py::test_production_predictions_unchanged_on_fixtures PASSED [ 50%]
+tests/test_profiles.py::test_predict_and_health_report_profile PASSED    [ 53%]
+tests/test_profiles.py::test_predict_request_contract_unchanged PASSED   [ 56%]
+tests/test_profiles.py::test_predict_under_demo_profile_says_so PASSED   [ 60%]
+tests/test_profiles.py::test_event_stores_raw_window_and_both_profiles PASSED [ 63%]
+tests/test_profiles.py::test_event_validation PASSED                     [ 66%]
+tests/test_profiles.py::test_api_key_enforced_when_configured PASSED     [ 70%]
+tests/test_profiles.py::test_demo_profile_incidents_excluded_from_performance_statistics PASSED [ 73%]
+tests/test_profiles.py::test_exclusion_rule_table PASSED                 [ 76%]
+tests/test_profiles.py::test_firmware_header_is_generated_from_current_json PASSED [ 80%]
+tests/test_profiles.py::test_firmware_filter_matches_server_filter PASSED [ 83%]
+tests/test_profiles.py::test_firmware_profile_selection PASSED           [ 86%]
+tests/test_profiles.py::test_firmware_gate_matches_server_gate[production] PASSED [ 90%]
+tests/test_profiles.py::test_firmware_gate_matches_server_gate[demo-like] PASSED [ 93%]
+tests/test_profiles.py::test_analysis_runs_end_to_end_and_refuses_synthetic_profile PASSED [ 96%]
+tests/test_profiles.py::test_analysis_refuses_underpowered_dataset PASSED [100%]
+
+============================= 30 passed in 30.92s =============================
